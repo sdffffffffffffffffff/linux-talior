@@ -1,0 +1,140 @@
+
+
+## Minimal strategy that actually works
+
+- **Start from a sane baseline:** Use the built-in guest config.
+  - x86_64: run `make x86_64_defconfig` then `make kvm_guest.config`.
+  - This gets you most virtualization bits without drowning in drivers.
+- **Build critical drivers into the kernel (y), not as modules (m):** You want it to boot even without an initramfs.
+- **Turn on debug symbols and disable address randomization:** Makes GDB usable and symbols stable.
+
+---
+
+## Required config to boot under QEMU/KVM
+
+Ensure these are set to yes (built-in). After applying `x86_64_defconfig` + `kvm_guest.config`, verify/toggle these:
+
+- **Core/boot**
+  - **CONFIG_DEVTMPFS=y**, **CONFIG_DEVTMPFS_MOUNT=y**
+  - **CONFIG_BLK_DEV_INITRD=y** (if you use an initramfs)
+  - **CONFIG_TMPFS=y**, **CONFIG_PROC_FS=y**, **CONFIG_SYSFS=y**
+  - **CONFIG_FHANDLE=y** (helps modern userspace)
+
+- **Storage and filesystem**
+  - Virtio disk: **CONFIG_VIRTIO_PCI=y**, **CONFIG_VIRTIO_BLK=y**
+  - Filesystem: **CONFIG_EXT4_FS=y** (or whatever you’ll use for rootfs)
+  - Partition: **CONFIG_MSDOS_PARTITION=y** (common for qcow2/virt images)
+
+- **Console/serial**
+  - **CONFIG_TTY=y**, **CONFIG_SERIAL_8250=y**, **CONFIG_SERIAL_8250_CONSOLE=y**
+  - Boot arg will be `console=ttyS0`
+
+- **Network (optional for SSH)**
+  - **CONFIG_VIRTIO_NET=y** (or E1000: **CONFIG_E1000=y**)
+  - **CONFIG_INET=y**, **CONFIG_PACKET=y**
+
+- **ACPI/PCI**
+  - **CONFIG_PCI=y**, **CONFIG_PCI_MSI=y**
+  - **CONFIG_ACPI=y** (QEMU exposes ACPI by default)
+
+- **Virtualization**
+  - **CONFIG_PARAVIRT=y**, **CONFIG_PARAVIRT_TIME_ACCOUNTING=y**
+  - **CONFIG_KVM_GUEST=y**, **CONFIG_HYPERVISOR_GUEST=y**
+
+- **Security/debug for GDB/KGDB**
+  - **CONFIG_DEBUG_INFO_DWARF5=y** (or at least **CONFIG_DEBUG_INFO=y**)
+  - **CONFIG_KALLSYMS=y**, **CONFIG_KALLSYMS_ALL=y**
+  - **CONFIG_FRAME_POINTER=y**
+  - Optional (KGDB): **CONFIG_KGDB=y**, **CONFIG_KGDB_SERIAL_CONSOLE=y**, **CONFIG_GDB_SCRIPTS=y**
+  - Either disable KASLR or set the boot arg: `nokaslr`
+    - Config: set **CONFIG_RANDOMIZE_BASE=n** if you prefer.
+
+Tip: If you want truly tiny, start from `make tinyconfig` then run `make kvm_guest.config` and add the items above—but the defconfig path is faster.
+
+---
+
+## Build and boot quickly
+
+#### Build
+```bash
+make -j$(nproc)
+# If you use modules at all:
+sudo make modules_install
+sudo make install   # if you plan to boot via your distro bootloader (not needed for QEMU -kernel)
+```
+
+#### Option A: Boot a disk image with your kernel
+- Create a qcow2 with an ext4 rootfs (e.g., minimal Ubuntu/Debian).
+- Boot:
+```bash
+qemu-system-x86_64 \
+  -enable-kvm -cpu host -smp 2 -m 2048 \
+  -drive file=disk.qcow2,if=virtio \
+  -nographic \
+  -kernel ./arch/x86/boot/bzImage \
+  -append "root=/dev/vda1 rw console=ttyS0 nokaslr"
+```
+
+#### Option B: Boot an initramfs only (no disk)
+- Build or generate an initramfs that runs a tiny /init.
+- Boot:
+```bash
+qemu-system-x86_64 \
+  -enable-kvm -cpu host -smp 2 -m 1024 \
+  -nographic \
+  -kernel ./arch/x86/boot/bzImage \
+  -initrd ./initramfs.cpio.gz \
+  -append "console=ttyS0 nokaslr rdinit=/init"
+```
+
+---
+
+## Two clean ways to debug with GDB
+
+#### 1) QEMU gdbstub (no KGDB needed)
+- Start QEMU paused with a GDB server:
+```bash
+qemu-system-x86_64 ... -s -S
+# -s = -gdb tcp::1234, -S = wait at reset
+```
+- In another terminal:
+```bash
+gdb vmlinux
+(gdb) target remote :1234
+(gdb) b start_kernel
+(gdb) c
+```
+- Works great when you pass `-kernel vmlinux` or have matching symbols for bzImage.
+
+#### 2) KGDB over serial (in-guest breakpoints at runtime)
+- Kernel boot args:
+```
+console=ttyS0 kgdboc=ttyS0,115200 nokaslr
+```
+- Run QEMU with a TCP serial:
+```bash
+qemu-system-x86_64 ... -serial tcp::4444,server,nowait -nographic
+```
+- Connect GDB:
+```bash
+gdb vmlinux
+(gdb) target remote :4444
+# In the guest, trigger a break:
+echo g | sudo tee /proc/sysrq-trigger
+```
+
+Use one method at a time to avoid confusion.
+
+---
+
+## If you don’t want to hand-pick drivers
+
+- Apply a guest preset and add debug:
+  1) `make x86_64_defconfig`
+  2) `make kvm_guest.config`
+  3) `make menuconfig` and enable:
+     - DEBUG_INFO, GDB_SCRIPTS, KALLSYMS_ALL, FRAME_POINTER
+     - KGDB/KGDB_SERIAL_CONSOLE if you want KGDB
+     - Ensure VIRTIO_PCI, VIRTIO_BLK, VIRTIO_NET, EXT4, 8250 serial are built-in (y)
+
+That’s it. You’ll boot under QEMU/KVM and have a clean, symbol-rich kernel ready for breakpoints. If you share your architecture (x86_64/arm64) and whether you want initramfs or a disk image, I can give you an exact .config fragment and QEMU command.
