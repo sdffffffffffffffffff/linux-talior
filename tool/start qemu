@@ -1,0 +1,103 @@
+Absolutely! Here's a custom Linux kernel configuration file that satisfies your QEMU/KVM boot requirements. This config assumes you're starting from `x86_64_defconfig` and `kvm_guest.config`, and then applying the necessary overrides.
+
+---
+
+## 🛠️ Final Kernel Config Snippet
+
+You can append this to your `.config` after applying the base configs:
+
+```text
+# Core/boot
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_TMPFS=y
+CONFIG_PROC_FS=y
+CONFIG_SYSFS=y
+CONFIG_FHANDLE=y
+
+# Storage and filesystem
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_EXT4_FS=y
+CONFIG_MSDOS_PARTITION=y
+
+# Console/serial
+CONFIG_TTY=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+
+# Network (optional for SSH)
+CONFIG_VIRTIO_NET=y
+CONFIG_E1000=y
+CONFIG_INET=y
+CONFIG_PACKET=y
+
+# ACPI/PCI
+CONFIG_PCI=y
+CONFIG_PCI_MSI=y
+CONFIG_ACPI=y
+
+# Virtualization
+CONFIG_PARAVIRT=y
+CONFIG_PARAVIRT_TIME_ACCOUNTING=y
+CONFIG_KVM_GUEST=y
+CONFIG_HYPERVISOR_GUEST=y
+
+# Security/debug for GDB/KGDB
+CONFIG_DEBUG_INFO_DWARF5=y
+CONFIG_KALLSYMS=y
+CONFIG_KALLSYMS_ALL=y
+CONFIG_FRAME_POINTER=y
+CONFIG_KGDB=y
+CONFIG_KGDB_SERIAL_CONSOLE=y
+CONFIG_GDB_SCRIPTS=y
+
+# Disable KASLR
+CONFIG_RANDOMIZE_BASE=n
+```
+
+---
+
+## 🧪 Build Commands
+
+Here’s how to build the kernel with this config:
+
+```bash
+# Step 1: Get the kernel source
+git clone https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+cd linux
+
+# Step 2: Apply base configs
+make x86_64_defconfig
+scripts/kconfig/merge_config.sh .config path/to/kvm_guest.config
+
+# Step 3: Append your custom config
+cat path/to/custom_config_snippet >> .config
+
+# Step 4: Ensure all dependencies are resolved
+make olddefconfig
+
+# Step 5: Build the kernel
+make -j$(nproc)
+
+# Optional: Build initramfs if needed
+# Use tools like `dracut` or `initramfs-tools` depending on your distro
+```
+
+---
+
+## 🧵 Booting with QEMU
+
+Example QEMU command:
+
+```bash
+qemu-system-x86_64 \
+  -kernel arch/x86/boot/bzImage \
+  -append "root=/dev/vda1 console=ttyS0 nokaslr" \
+  -drive file=rootfs.qcow2,format=qcow2,if=virtio \
+  -netdev user,id=n1 -device virtio-net-pci,netdev=n1 \
+  -nographic
+```
+
+Let me know if you want help generating an initramfs or building a minimal rootfs for testing!
